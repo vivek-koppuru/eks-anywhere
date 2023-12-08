@@ -221,7 +221,7 @@ func (c *EKSACollectorFactory) bottleRocketHostCollectors() []*Collect {
 }
 
 func (c *EKSACollectorFactory) ubuntuHostCollectors() []*Collect {
-	return []*Collect{
+	collectors := []*Collect{
 		{
 			CopyFromHost: &copyFromHost{
 				Name:      hostlogPath("cloud-init"),
@@ -248,6 +248,8 @@ func (c *EKSACollectorFactory) ubuntuHostCollectors() []*Collect {
 			},
 		},
 	}
+	collectors = append(collectors, c.etcdctlOutputCollectors()...)
+	return collectors
 }
 
 func (c *EKSACollectorFactory) defaultLogCollectors() []*Collect {
@@ -490,6 +492,13 @@ func (c *EKSACollectorFactory) controlPlaneNetworkPathCollector(controlPlaneIP s
 	return collectors
 }
 
+func (c *EKSACollectorFactory) etcdctlOutputCollectors() []*Collect {
+	var collectors []*Collect
+	collectors = append(collectors, c.etcdctlListCollector())
+	collectors = append(collectors, c.etcdctlStatusCollector())
+	return collectors
+}
+
 func (c *EKSACollectorFactory) hostPortCollector(ports []string, hostIP string) *Collect {
 	apiServerPort := ports[0]
 	port := ports[1]
@@ -530,6 +539,14 @@ func (c *EKSACollectorFactory) pingHostCollector(hostIP string) *Collect {
 			Timeout: "30s",
 		},
 	}
+}
+
+func (c *EKSACollectorFactory) etcdctlListCollector() *Collect {
+	return nil
+}
+
+func (c *EKSACollectorFactory) etcdctlStatusCollector() *Collect {
+	return nil
 }
 
 // vmsAccessCollector will connect to API server first, then collect vsphere-cloud-controller-manager logs
