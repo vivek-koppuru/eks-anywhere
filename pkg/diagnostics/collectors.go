@@ -217,7 +217,7 @@ func (c *EKSACollectorFactory) getCollectorsMap() map[v1alpha1.OSFamily][]*Colle
 }
 
 func (c *EKSACollectorFactory) bottleRocketHostCollectors() []*Collect {
-	return []*Collect{}
+	return c.etcdctlOutputCollectors()
 }
 
 func (c *EKSACollectorFactory) ubuntuHostCollectors() []*Collect {
@@ -542,7 +542,95 @@ func (c *EKSACollectorFactory) pingHostCollector(hostIP string) *Collect {
 }
 
 func (c *EKSACollectorFactory) etcdctlListCollector() *Collect {
-	return nil
+	etcdEndpointsCommand := "ETCD_ENDPOINTS=$(cat /etc/kubernetes/static-pods/kube-apiserver | grep etcd-servers | awk -F'=' '{print $2}')"
+	etcdCTLCommand := "etcdctl member list -w table --endpoints=$ETCD_ENDPOINTS"
+	podName := "etcdctl-analyzer"
+	etctctlListArgs := []string{etcdEndpointsCommand + " && " + etcdCTLCommand}
+	pkiMountPath := "/var/lib/kubeadm/pki"
+	staticPodsMountPath := "/etc/kubernetes/static-pods"
+	return &Collect{
+		RunPod: &runPod{
+			Name:      podName,
+			Namespace: constants.EksaDiagnosticsNamespace,
+			PodSpec: &v1.PodSpec{
+				Containers: []v1.Container{{
+					Env: []v1.EnvVar{
+						{
+							Name:  "ETCDCTL_CACERT",
+							Value: pkiMountPath + "/etcd/ca.crt",
+						},
+						{
+							Name:  "ETCDCTL_CERT",
+							Value: pkiMountPath + "/server-etcd-client.crt",
+						},
+						{
+							Name:  "ETCDCTL_KEY",
+							Value: pkiMountPath + "/apiserver-etcd-client.key",
+						},
+					},
+					Name:    podName,
+					Image:   "d8660091/test:etcdctl01",
+					Command: []string{"/bin/sh", "-c"},
+					Args:    etctctlListArgs,
+					VolumeMounts: []v1.VolumeMount{
+						{
+							Name:      "host-pki-volume",
+							MountPath: pkiMountPath,
+						},
+						{
+							Name:      "static-pods-volume",
+							MountPath: staticPodsMountPath,
+						},
+					},
+				}},
+				Volumes: []v1.Volume{
+					{
+						Name: "host-pki-volume",
+						VolumeSource: v1.VolumeSource{
+							HostPath: &v1.HostPathVolumeSource{
+								Path: pkiMountPath,
+							},
+						},
+					},
+					{
+						Name: "static-pods-volume",
+						VolumeSource: v1.VolumeSource{
+							HostPath: &v1.HostPathVolumeSource{
+								Path: staticPodsMountPath,
+							},
+						},
+					},
+				},
+				// TODO: test without host network configured.
+				HostNetwork: true,
+				Tolerations: []v1.Toleration{
+					{
+						Effect: "NoSchedule",
+						Key:    "node-role.kubernetes.io/control-plane",
+					},
+					{
+						Effect: "NoSchedule",
+						Key:    "node-role.kubernetes.io/master",
+					},
+				},
+				Affinity: &v1.Affinity{
+					NodeAffinity: &v1.NodeAffinity{
+						RequiredDuringSchedulingIgnoredDuringExecution: &v1.NodeSelector{
+							NodeSelectorTerms: []v1.NodeSelectorTerm{
+								{
+									MatchExpressions: []v1.NodeSelectorRequirement{{
+										Key:      "node-role.kubernetes.io/control-plane",
+										Operator: "Exists",
+									}},
+								},
+							},
+						},
+					},
+				},
+			},
+			Timeout: "30s",
+		},
+	}
 }
 
 func (c *EKSACollectorFactory) etcdctlStatusCollector() *Collect {
@@ -614,6 +702,8 @@ func makeTolerations(taints []v1.Taint) []v1.Toleration {
 			Effect: "NoSchedule",
 		},
 	}
+
+	//TODO: Should the key here be updated to "node-role.kubernetes.io/control-plane"?
 	if taints == nil {
 		toleration := v1.Toleration{
 			Effect: "NoSchedule",
