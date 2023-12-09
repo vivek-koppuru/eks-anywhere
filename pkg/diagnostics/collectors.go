@@ -217,7 +217,7 @@ func (c *EKSACollectorFactory) getCollectorsMap() map[v1alpha1.OSFamily][]*Colle
 }
 
 func (c *EKSACollectorFactory) bottleRocketHostCollectors() []*Collect {
-	return c.etcdctlOutputCollectors()
+	return c.etcdctlOutputCollectors("/var/lib/kubeadm/pki", "server-etcd-client.crt", "/etc/kubernetes/static-pods", "kube-apiserver")
 }
 
 func (c *EKSACollectorFactory) ubuntuHostCollectors() []*Collect {
@@ -248,7 +248,7 @@ func (c *EKSACollectorFactory) ubuntuHostCollectors() []*Collect {
 			},
 		},
 	}
-	collectors = append(collectors, c.etcdctlOutputCollectors()...)
+	collectors = append(collectors, c.etcdctlOutputCollectors("/etc/kubernetes/pki", "apiserver-etcd-client.crt", "/etc/kubernetes/manifests", "kube-apiserver.yaml")...)
 	return collectors
 }
 
@@ -492,9 +492,9 @@ func (c *EKSACollectorFactory) controlPlaneNetworkPathCollector(controlPlaneIP s
 	return collectors
 }
 
-func (c *EKSACollectorFactory) etcdctlOutputCollectors() []*Collect {
+func (c *EKSACollectorFactory) etcdctlOutputCollectors(pkiMountPath, certFileName, manifestsMountPath, apiserverFileName string) []*Collect {
 	var collectors []*Collect
-	collectors = append(collectors, c.etcdctlListCollector())
+	collectors = append(collectors, c.etcdctlListCollector(pkiMountPath, certFileName, manifestsMountPath, apiserverFileName))
 	collectors = append(collectors, c.etcdctlStatusCollector())
 	return collectors
 }
@@ -541,13 +541,11 @@ func (c *EKSACollectorFactory) pingHostCollector(hostIP string) *Collect {
 	}
 }
 
-func (c *EKSACollectorFactory) etcdctlListCollector() *Collect {
-	etcdEndpointsCommand := "ETCD_ENDPOINTS=$(cat /etc/kubernetes/static-pods/kube-apiserver | grep etcd-servers | awk -F'=' '{print $2}')"
+func (c *EKSACollectorFactory) etcdctlListCollector(pkiMountPath, certFileName, manifestsMountPath, apiserverFileName string) *Collect {
+	etcdEndpointsCommand := fmt.Sprintf("ETCD_ENDPOINTS=$(cat %s/%s | grep etcd-servers | awk -F'=' '{print $2}')", manifestsMountPath, apiserverFileName)
 	etcdCTLCommand := "etcdctl member list -w table --endpoints=$ETCD_ENDPOINTS"
 	podName := "etcdctl-analyzer"
 	etctctlListArgs := []string{etcdEndpointsCommand + " && " + etcdCTLCommand}
-	pkiMountPath := "/var/lib/kubeadm/pki"
-	staticPodsMountPath := "/etc/kubernetes/static-pods"
 	return &Collect{
 		RunPod: &runPod{
 			Name:      podName,
@@ -561,7 +559,7 @@ func (c *EKSACollectorFactory) etcdctlListCollector() *Collect {
 						},
 						{
 							Name:  "ETCDCTL_CERT",
-							Value: pkiMountPath + "/server-etcd-client.crt",
+							Value: pkiMountPath + "/" + certFileName,
 						},
 						{
 							Name:  "ETCDCTL_KEY",
@@ -579,7 +577,7 @@ func (c *EKSACollectorFactory) etcdctlListCollector() *Collect {
 						},
 						{
 							Name:      "static-pods-volume",
-							MountPath: staticPodsMountPath,
+							MountPath: manifestsMountPath,
 						},
 					},
 				}},
@@ -596,7 +594,7 @@ func (c *EKSACollectorFactory) etcdctlListCollector() *Collect {
 						Name: "static-pods-volume",
 						VolumeSource: v1.VolumeSource{
 							HostPath: &v1.HostPathVolumeSource{
-								Path: staticPodsMountPath,
+								Path: manifestsMountPath,
 							},
 						},
 					},
@@ -634,7 +632,7 @@ func (c *EKSACollectorFactory) etcdctlListCollector() *Collect {
 }
 
 func (c *EKSACollectorFactory) etcdctlStatusCollector() *Collect {
-	return nil
+	return &Collect{}
 }
 
 // vmsAccessCollector will connect to API server first, then collect vsphere-cloud-controller-manager logs
@@ -703,7 +701,7 @@ func makeTolerations(taints []v1.Taint) []v1.Toleration {
 		},
 	}
 
-	//TODO: Should the key here be updated to "node-role.kubernetes.io/control-plane"?
+	// TODO: Should the key here be updated to "node-role.kubernetes.io/control-plane"?
 	if taints == nil {
 		toleration := v1.Toleration{
 			Effect: "NoSchedule",
