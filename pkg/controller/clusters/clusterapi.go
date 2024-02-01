@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/cluster-api/util/conditions"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -34,11 +35,25 @@ func CheckControlPlaneReady(ctx context.Context, client client.Client, log logr.
 		return controller.ResultWithRequeue(5 * time.Second), nil
 	}
 
-	if !conditions.IsTrue(kcp, clusterapi.ReadyCondition) {
+	// For in place upgrades, the ready condition is always true so we need to check the updated replicas in the status as well
+	if !completeWaitForReadyCondition(conditions.GetLastTransitionTime(kcp, clusterapi.ReadyCondition)) || (!conditions.IsTrue(kcp, clusterapi.ReadyCondition) && (kcp.Spec.Replicas == nil || (*kcp.Spec.Replicas != kcp.Status.UpdatedReplicas))) {
 		log.Info("KCP is not ready yet, requeing")
 		return controller.ResultWithRequeue(30 * time.Second), nil
 	}
 
 	log.Info("KCP is ready")
 	return controller.Result{}, nil
+}
+
+func completeWaitForReadyCondition(t *metav1.Time) bool {
+	if t.IsZero() {
+		return false
+	}
+	if t.Add(time.Duration(30) * time.Minute).Before(time.Now()) {
+		return false
+	}
+	if t.Add(time.Duration(30) * time.Second).After(time.Now()) {
+		return false
+	}
+	return true
 }
